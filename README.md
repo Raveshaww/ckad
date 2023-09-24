@@ -1,0 +1,250 @@
+# CKAD Notes
+These are my notes from before I took the CKAD exam. These were mostly taken from a combination of following along KodeKloud's course on the subject, as well as my own personal experiences.
+### Core Concepts
+- General Notes
+    - You can set up bash completion with the following:
+        - `kubectl completion bash >> ~/.bashrc`
+    - to run a command inside a pod:
+        - `kubectl -n elastic-stack exec -it app -- cat /log/app.log`
+- Recap Architecture 
+    - Nodes used to be called minions
+- Docker vs ContainerD
+    - Containerd is technically part of Docker, but is its own thing
+    - You can install it without Docker, since you won't always need Docker's features
+    - `ctr` is used for debugging containerd
+    - `nerdctl` provides a docker-like CLI for containerD and makes it easier to work with
+        - supports Namespaces in k8s, for an example
+    - `ctictl` provides a CLI for a CRI compatible container runtimes and is used to inspect and debug container runtimes
+        - works across different runtimes
+- Practice Test - Pods
+    - `kubectl run` does not need the type of `pod` specifiedz
+- Recap ReplicaSets
+    - `replicaSets` are replacing `replicaControllers`
+- Recap deployments
+    - `Deployments` are higher in the hierarchy than `replicaSets`
+- Recap namespace
+    - dns follows this order:
+        - ServiceName.Namespace.Service.Domain
+        - for example
+            - `db-service.dev.svc.cluster.local`
+    - you can set context with `set-context`
+### Configuration 
+- Commands and Args in k8s
+    - anything that is appended to the `docker run` command will be added to the `args` field in the spec file
+    - you can override the `entrypoint` in the docker file with the `command` field in the k8s spec file
+- Config Maps
+    - can be attached as a volume
+- Secrets
+    - When storing secrets in a declarative way, you must encode the secret before inputting it into the yaml file
+        - `echo -n 'mysql' | base64`
+            - **MAKE SURE TO REMEMBER THE -N TO AVOID THE NEWLINE CHARACTER**
+    - to decode:
+        - `echo -n 'bXlzcWw=' | base64 --decode`
+    - if you mount a secret as a volume, each value is its own file in the pod
+    - secrets are not encrypted in etcd
+    - anyone with access to that namespace can access the secrets
+- Practice Test - Secrets
+    - It may be worth creating the secret from a literal command if the base64 encoding seems to be giving you issues
+- Encrypting at rest
+    - You may need to install `etcd-client` or run it from a pod
+    - the order of providers on the `EncryptionConfiguration` file matters. The first one will always be used
+- Docker Security
+    - Docker uses some security features to limit what the root user in the container can do
+    - You can override this with `--cap-add`
+- Security Contexts
+    - You can choose to configure security settings at a pod level or a container level
+        - The more specific a setting, the higher priority
+    - Security Contexts otherwise work like Docker security
+- Resource Requirements
+    - You can specify the resources requested and limits for a pod
+    - CPU is equal to a VCPU or 1 Hyperthread
+    - A pod will terminate if its using more memory than its limit, and the CPU will be throttled
+    - By default, no limits are set 
+    - If no pods have limits, it's a good idea to set requests on all pods to ensure each pod has at least some resources
+        - if doing this and memory is an issue, a pod will be killed to gain memory
+    - You can also set limit ranges
+    - You can create a quotas at a namespace level to limit all pods resource usage
+- Service accounts
+    - You can mount a service account's token to a pod as a volume
+        - `/var/run/secrets/kubernetes.io/serviceaccount`
+    - every namespace has a default service account, and this is always automatically mounted to a pod by default
+    - fun fact, these are JWT with no expiry dates
+    - There is now a `tokenRequestAPI` to help provision more secure tokens for service account
+        - always are:
+            - audience bound
+            - time bound
+            - object bound
+        - Tokens from this API are mounted as a projected volume on a pod 
+    - In the past, when a serviceAccount was created, a secret was automatically created
+        - in `v1.24` this no longer happens
+        - Now you must run `kubectl create token dashboard-sa`, for example
+        - you can still do the old way with the annotation `kubernetes.io/service-account.name` in a secret definition file
+- Taints and Tolerations
+    - This controls what nodes pods can land on
+    - key = spray, value = mortein, action = noSchedule
+        - `kubectl taint node node01 spray=mortein:NoSchedule`
+    - This does not **guarantee* that a pod will end up on a specific node alone
+- Node Selectors
+    - You select based on labels, but you can't do things like "all nodes that don't have this label"
+        - for this, you need `node affinity` and `node anti-affinity`
+- Node Affinity
+    - If unable to match a node, it depends on what the type of node affinity is selected
+        - i.e. `requiredDuringSchedulingIgnoredDuringExecution`
+    - Operators include:
+        - `In`
+        - `Exists`
+        - `NotIn`
+        - `DoesNotExist`
+        - `Gt`
+        - `Lt`
+### Multi Container Pods
+- Multi Container Pods
+    - they share the same network space and storage volumes
+    - There are three main patterns of multi-container pods
+        - ambassador
+            - outsourcing certain logic for your pod, like proxying a request to a database
+        - sidecar
+            - like deploying a logging agent alongside a webserver and forwarding those logs to a log server
+        - adapter
+            - like processing logs before sending it to a logging server
+### Observability
+- Readiness probes
+    - These are used to tie the ready status of a pod to the actual software in the container being ready
+- Logging
+    - `kubectl logs` will fail if no specific container is selected in a multi-container pod
+- Monitoring
+    - k8s does not come with a full-featured monitoring solution 
+    - the CKAD requires a minimal knowledge of monitoring, using `metric server`
+        - you may see some reference to `heapster`, but it is now deprecated
+        - you can have one `metric server` per cluster
+        - it's in-memory
+    - each kubelet has something called a `cAdvisor` that obtains metrics and exposes it to the api server
+    - You can use `kubectl top` to view metrics
+### Pod Design
+- Labels, Selectors, and Annotations
+    - annotations are used to record other details for informatory purposes, like `buildVersions`
+    - You can select multiple labels like this:
+        - `kubectl get pod --selector env=prod,bu=finance,tier=frontend`
+- Jobs
+    - If a job fails, k8s will continue to create pods until the requisite amount of completions are met
+    - You can specify parallelism
+### Services and Networking
+- Services
+    - You can use a selector to associate it with a pod
+    - nodePort
+        - Service makes an internal port accessible on a port on the node
+        - makes an pod accessible via a port on the node
+        - terms are from the viewpoint of the service
+        - There are three ports involved:
+            - `targetPort` = pod port
+            - `port` = service port (since its from the viewpoint of the service)
+                - inside the cluster, the service has its own IP address
+            - `nodePort` = port of the node
+        - example config:
+            - `targetPort = 8080, port = 80, nodePort = 30080`
+                - accessed from the outside world at `30080`
+                - the service listens on port `80`
+                - the pod listens on port 8080
+                    - This allows for different ports to be mapped so that you can run multiple services on the same host machine
+        - from "outside" to "inside"
+            - nodeport > port > targetport
+    - clusterIP
+        - creates a virtual IP inside the cluster to enable comms between services
+        - reachable from within the cluster, and thus is generally used for things like backend and database traffic
+        - There are two ports in use:
+            - `port` represents the port on the service that will expose the app
+            - `targetPort` represents the port on which the application runs in the pod
+        - This is the default type
+    - LoadBalancer
+        - External loadbalancer is allocated for the service
+        - The load balancer is configured accordingly (eg. NodePort service is created, and the LB sends traffic to that port)
+        - Available only when the underlying infra provides some LB as a service, like in GCP or Azure
+- ClusterIP
+    - Groups pod together and provides a single interface for a group of pods
+- Network Policies
+    - You can also use selectors to apply these to specific pods
+- Ingress Networking
+    - Ingress is a layer 7 load balancer built into the cluster
+    - GCE (gcp cloud balancer) and nginx are supported by k8s natively
+### State Persistence
+- Storage in Docker
+    - docker stores files in `/var/lib/docker`
+    - storage drivers are what control all of the storage actions taken by the container
+    - Docker will pick what's best out of what is available automatically
+- Volume Driver Plugins
+    - local driver
+        - works like noted above in `Storage in Docker`
+- Volumes in k8s
+    - k8s supports different storage solutions to keep volumes the same across nodes, like `nfs` or `ceph`
+- Persistent Volumes
+    - These are volumes that are configured outside of the pod definition file, so the lifecycle is not tied to the pod
+- Persistent Volume Claims
+    - multiple claims can't be placed on a single persistent volume, it's a one-to-one relationship
+### Sep 2021 changes
+- Define, build, and modify docker images
+    - Don't forget to tag your images to name them properly
+        - `docker build -t webapp-color .`
+- authn
+    - for users that are not service accounts, relies on a file (password or token), certificates, or a third party service
+    - the auth method needs to be added to `kube-apiserver.service`
+    - order in the file goes:
+        - password / token, userName, userID, groupName
+- KubeConfig
+    - How to generate certs for k8s components and for a user to use in a k8s cluster is not in the scope of CKAD
+    - KubeConfig files are needed for auth things, like curl requests
+    - Using these will let you connect to multiple different clusters and contexts easily
+    - by default, it will grab the file located at `~/.kube/config`
+    - Contexts marry user accounts to clusters. Think of it kind of like a vscode workspace
+    - You can manually change context with the following:
+        - `kubectl config use-context prod-user@production`
+    - You can also use this to set default namespaces for each context
+- Authz
+    - When you have multiple modes configured, your request is authorized in the order of the modes listed
+    - if denied, it will continue down the chain until it is accepted
+- RBAC
+    - roles are namespaced
+    - to link users to role, you create a roleBinding object
+    - you can check perms with `kubectl auth can-i < action like create deployments>`
+    - you can impersonate (as admin) like this `kubectl auth can-i create pods --as dev-user`
+- Cluster Roles
+    - Kind of like the above, but bound to cluster scoped resources like nodes and storage
+        - This is in contrast to namespace-scoped resources like pods
+    - If you assign access to a namespace resource here, the user will have access to all of that resource across the cluster
+- Admission Controllers
+    - This can be used to only allow specific images, or the use of only one registry or etc
+        - Can be used to force certain other specifics, like no root user pods and etc
+            - built-in AC:
+                - `alwayspullimages`
+                - `defaultstorageclass`
+                - `eventratelimit`
+                - `namespaceexists`
+    - view enabled AC:
+        - `kube-apiserver -h | grep enable-admission-plugins`
+    - to enable a new AC, add a flag in the manifest file or .service file, depending on setup
+- Validating and mutating admission controllers
+    - these set defaults when they are not otherwise specified in the yaml file for a resource
+    - Additional AC's are added via `MutatingAdmissionWebhook` and `ValidatingAdmissionWebhook`
+- API versions
+    - alpha versions have to be enabled manually
+    - kubectl will query the prefered version of an API
+    - you can enable / disable api groups in the same way you enable / disable admission controllers
+- API deprecations
+    - GA is supported for 12 months or 3 releases (whichever is longer)
+        - beta is for 9 months or 3 releases
+        - kubectl convert can help update yaml to newer API versions
+    - You can find out which API group a resource is a part of with 
+        - `kubectl explain job`
+- Custom Resource Definitions
+    - Don't forget that you can use `kubectl` to view the CRD yaml to figure out what you need to do to make a custom resource
+- Operator framework
+    - You can package a CRD and a custom controller together using the operator framework
+    - you can find operators at operatorhub.io
+- blue / green deployment
+    - Basically just change the label selector on a service to redirect traffic to the new deployment when ready
+- canary deployment
+    - Create a second canary deployment, have the service route traffic to pods in that deployment in small amounts
+        - Create a common label to select on both deployments
+        - by default it will route traffic equally, so you can change this by reducing the amount of pods in the canary deployment
+            - service meshes like Itsio comes with better control than what is available out of the box
+- helm concepts
+    - basically, the first step is to convert your yaml to "templates", which feel similar to terraform variables
